@@ -101,9 +101,9 @@ set_target_properties(
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 
-if(NOT ADA_COVERAGE AND NOT EMSCRIPTEN)
-  add_subdirectory(singleheader)
-endif()
+# if(NOT ADA_COVERAGE AND NOT EMSCRIPTEN)
+#   add_subdirectory(singleheader)
+# endif()
 
 if(ADA_TOOLS)
   if(Git_FOUND)
