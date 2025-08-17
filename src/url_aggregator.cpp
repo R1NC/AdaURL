@@ -1,4 +1,3 @@
-#include "ada.h"
 #include "ada/checkers-inl.h"
 #include "ada/helpers.h"
 #include "ada/implementation.h"
@@ -9,6 +8,8 @@
 #include "ada/url_aggregator.h"
 #include "ada/url_aggregator-inl.h"
 
+#include <iterator>
+#include <ranges>
 #include <string>
 #include <string_view>
 
@@ -228,7 +229,7 @@ bool url_aggregator::set_protocol(const std::string_view input) {
 
   if (pointer != view.end() && *pointer == ':') {
     return parse_scheme_with_colon<true>(
-        std::string_view(view.data(), pointer - view.begin() + 1));
+        view.substr(0, pointer - view.begin() + 1));
   }
   return false;
 }
@@ -280,24 +281,33 @@ bool url_aggregator::set_port(const std::string_view input) {
   if (cannot_have_credentials_or_port()) {
     return false;
   }
-  std::string trimmed(input);
-  helpers::remove_ascii_tab_or_newline(trimmed);
-  if (trimmed.empty()) {
+
+  if (input.empty()) {
     clear_port();
     return true;
   }
-  // Input should not start with control characters.
-  if (ada::unicode::is_c0_control_or_space(trimmed.front())) {
-    return false;
+
+  std::string trimmed(input);
+  helpers::remove_ascii_tab_or_newline(trimmed);
+
+  if (trimmed.empty()) {
+    return true;
   }
-  // Input should contain at least one ascii digit.
-  if (input.find_first_of("0123456789") == std::string_view::npos) {
+
+  // Input should not start with a non-digit character.
+  if (!ada::unicode::is_ascii_digit(trimmed.front())) {
     return false;
   }
 
+  // Find the first non-digit character to determine the length of digits
+  auto first_non_digit =
+      std::ranges::find_if_not(trimmed, ada::unicode::is_ascii_digit);
+  std::string_view digits_to_parse =
+      std::string_view(trimmed.data(), first_non_digit - trimmed.begin());
+
   // Revert changes if parse_port fails.
   uint32_t previous_port = components.port;
-  parse_port(trimmed);
+  parse_port(digits_to_parse);
   if (is_valid) {
     return true;
   }
@@ -493,8 +503,8 @@ ada_really_inline bool url_aggregator::parse_host(std::string_view input) {
   ada_log("parse_host to_ascii succeeded ", *host, " [", host->size(),
           " bytes]");
 
-  if (std::any_of(host.value().begin(), host.value().end(),
-                  ada::unicode::is_forbidden_domain_code_point)) {
+  if (std::ranges::any_of(host.value(),
+                          ada::unicode::is_forbidden_domain_code_point)) {
     return is_valid = false;
   }
 
@@ -540,43 +550,75 @@ bool url_aggregator::set_host_or_hostname(const std::string_view input) {
     // Note: the 'found_colon' value is true if and only if a colon was
     // encountered while not inside brackets.
     if (found_colon) {
+      // If buffer is the empty string, host-missing validation error, return
+      // failure.
+      std::string_view host_buffer = host_view.substr(0, location);
+      if (host_buffer.empty()) {
+        return false;
+      }
+
+      // If state override is given and state override is hostname state, then
+      // return failure.
       if constexpr (override_hostname) {
         return false;
       }
-      std::string_view sub_buffer = new_host.substr(location + 1);
-      if (!sub_buffer.empty()) {
-        set_port(sub_buffer);
-      }
-    }
-    // If url is special and host_view is the empty string, validation error,
-    // return failure. Otherwise, if state override is given, host_view is the
-    // empty string, and either url includes credentials or url's port is
-    // non-null, return.
-    else if (host_view.empty() &&
-             (is_special() || has_credentials() || has_port())) {
-      return false;
-    }
 
-    // Let host be the result of host parsing host_view with url is not special.
-    if (host_view.empty() && !is_special()) {
-      if (has_hostname()) {
-        clear_hostname();  // easy!
+      // Let host be the result of host parsing buffer with url is not special.
+      bool succeeded = parse_host(host_buffer);
+      if (!succeeded) {
+        update_base_hostname(previous_host);
+        update_base_port(previous_port);
+        return false;
+      }
+
+      // Set url's host to host, buffer to the empty string, and state to port
+      // state.
+      std::string_view port_buffer = new_host.substr(location + 1);
+      if (!port_buffer.empty()) {
+        set_port(port_buffer);
+      }
+      return true;
+    }
+    // Otherwise, if one of the following is true:
+    // - c is the EOF code point, U+002F (/), U+003F (?), or U+0023 (#)
+    // - url is special and c is U+005C (\)
+    else {
+      // If url is special and host_view is the empty string, host-missing
+      // validation error, return failure.
+      if (host_view.empty() && is_special()) {
+        return false;
+      }
+
+      // Otherwise, if state override is given, host_view is the empty string,
+      // and either url includes credentials or url's port is non-null, then
+      // return failure.
+      if (host_view.empty() && (has_credentials() || has_port())) {
+        return false;
+      }
+
+      // Let host be the result of host parsing host_view with url is not
+      // special.
+      if (host_view.empty() && !is_special()) {
+        if (has_hostname()) {
+          clear_hostname();  // easy!
+        } else if (has_dash_dot()) {
+          add_authority_slashes_if_needed();
+          delete_dash_dot();
+        }
+        return true;
+      }
+
+      bool succeeded = parse_host(host_view);
+      if (!succeeded) {
+        update_base_hostname(previous_host);
+        update_base_port(previous_port);
+        return false;
       } else if (has_dash_dot()) {
-        add_authority_slashes_if_needed();
+        // Should remove dash_dot from pathname
         delete_dash_dot();
       }
       return true;
     }
-
-    bool succeeded = parse_host(host_view);
-    if (!succeeded) {
-      update_base_hostname(previous_host);
-      update_base_port(previous_port);
-    } else if (has_dash_dot()) {
-      // Should remove dash_dot from pathname
-      delete_dash_dot();
-    }
-    return succeeded;
   }
 
   size_t location = new_host.find_first_of("/\\?");
@@ -1186,8 +1228,7 @@ bool url_aggregator::parse_opaque_host(std::string_view input) {
   ada_log("parse_opaque_host ", input, " [", input.size(), " bytes]");
   ADA_ASSERT_TRUE(validate());
   ADA_ASSERT_TRUE(!helpers::overlaps(input, buffer));
-  if (std::any_of(input.begin(), input.end(),
-                  ada::unicode::is_forbidden_host_code_point)) {
+  if (std::ranges::any_of(input, ada::unicode::is_forbidden_host_code_point)) {
     return is_valid = false;
   }
 
@@ -1416,15 +1457,20 @@ inline void url_aggregator::consume_prepared_path(std::string_view input) {
     // Note: input cannot be empty, it must at least contain one character ('.')
     // Note: we know that '\' is not present.
     if (input[0] != '.') {
-      size_t slashdot = input.find("/.");
-      if (slashdot == std::string_view::npos) {  // common case
-        trivial_path = true;
-      } else {  // uncommon
-        // only three cases matter: /./, /.. or a final /
-        trivial_path =
-            !(slashdot + 2 == input.size() || input[slashdot + 2] == '.' ||
-              input[slashdot + 2] == '/');
+      size_t slashdot = 0;
+      bool dot_is_file = true;
+      for (;;) {
+        slashdot = input.find("/.", slashdot);
+        if (slashdot == std::string_view::npos) {  // common case
+          break;
+        } else {  // uncommon
+          // only three cases matter: /./, /.. or a final /
+          slashdot += 2;
+          dot_is_file &= !(slashdot == input.size() || input[slashdot] == '.' ||
+                           input[slashdot] == '/');
+        }
       }
+      trivial_path = dot_is_file;
     }
   }
   if (trivial_path && is_at_path()) {
@@ -1518,8 +1564,8 @@ inline void url_aggregator::consume_prepared_path(std::string_view input) {
               ? path_buffer_tmp
               : path_view;
       if (unicode::is_double_dot_path_segment(path_buffer)) {
-        if ((helpers::shorten_path(path, type) || special) &&
-            location == std::string_view::npos) {
+        helpers::shorten_path(path, type);
+        if (location == std::string_view::npos) {
           path += '/';
         }
       } else if (unicode::is_single_dot_path_segment(path_buffer) &&

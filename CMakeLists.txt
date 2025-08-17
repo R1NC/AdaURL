@@ -3,25 +3,24 @@ cmake_minimum_required(VERSION 3.16)
 project(ada
   DESCRIPTION "Fast spec-compliant URL parser"
   LANGUAGES C CXX
-  VERSION 2.9.2
+  VERSION 3.2.7
 )
-set(ADA_LIB_VERSION "2.9.2" CACHE STRING "ada library version")
-set(ADA_LIB_SOVERSION "2" CACHE STRING "ada library soversion")
+set(ADA_LIB_VERSION "3.2.7" CACHE STRING "ada library version")
+set(ADA_LIB_SOVERSION "3" CACHE STRING "ada library soversion")
 
 include(GNUInstallDirs)
 
 include(CTest)
 include(cmake/ada-flags.cmake)
 
-set(ADA_SOURCE_DIR src)
-
 add_subdirectory(src)
 
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/scripts/cmake)
-
-option(ADA_BENCHMARKS "Build benchmarks" OFF)
-option(ADA_TESTING "Build tests" OFF)
-
+option(ADA_TESTING "Whether to build tests." OFF)
+option(ADA_BENCHMARKS "Whether to build benchmarks." OFF)
+option(ADA_TOOLS "Whether to build tools." OFF)
+option(ADA_BUILD_SINGLE_HEADER_LIB "Whether to build the lib from the single-header files" OFF)
+option(ADA_USE_SIMDUTF "Whether to use SIMDUTF for IDNA" OFF)
 # There are cases where when embedding ada as a dependency for other CMake
 # projects as submodules or subdirectories (via FetchContent) can lead to
 # errors due to CPM, so this is here to support disabling all the testing
@@ -29,9 +28,8 @@ option(ADA_TESTING "Build tests" OFF)
 if(ADA_TESTING OR ADA_BENCHMARKS OR ADA_TOOLS)
   include(cmake/CPM.cmake)
   # CPM requires git as an implicit dependency
-  find_package(Git QUIET)
   # We use googletest in the tests
-  if(Git_FOUND AND ADA_TESTING)
+  if(ADA_TESTING)
     CPMAddPackage(
       NAME GTest
       GITHUB_REPOSITORY google/googletest
@@ -40,11 +38,11 @@ if(ADA_TESTING OR ADA_BENCHMARKS OR ADA_TOOLS)
     )
   endif()
   # We use simdjson in both the benchmarks and tests
-  if(Git_FOUND AND (ADA_TESTING OR ADA_BENCHMARKS))
+  if(ADA_TESTING OR ADA_BENCHMARKS)
     CPMAddPackage("gh:simdjson/simdjson@3.10.1")
   endif()
   # We use Google Benchmark, but it does not build under several 32-bit systems.
-  if(Git_FOUND AND ADA_BENCHMARKS AND (CMAKE_SIZEOF_VOID_P EQUAL 8))
+  if(ADA_BENCHMARKS AND (CMAKE_SIZEOF_VOID_P EQUAL 8))
     CPMAddPackage(
       NAME benchmark
       GITHUB_REPOSITORY google/benchmark
@@ -57,13 +55,10 @@ if(ADA_TESTING OR ADA_BENCHMARKS OR ADA_TOOLS)
   endif()
 
   if (ADA_TESTING AND NOT EMSCRIPTEN)
-    if(Git_FOUND)
-      set(CTEST_TEST_TIMEOUT 5)
-      message(STATUS "The tests are enabled.")
-      add_subdirectory(tests)
-    else()
-      message(STATUS "The tests are disabled because git was not found.")
-    endif()
+    set(CTEST_TEST_TIMEOUT 5)
+    set(ADA_USE_UNSAFE_STD_REGEX_PROVIDER ON)
+    message(STATUS "The tests are enabled.")
+    add_subdirectory(tests)
   else()
     if(is_top_project)
       message(STATUS "The tests are disabled.")
@@ -71,12 +66,8 @@ if(ADA_TESTING OR ADA_BENCHMARKS OR ADA_TOOLS)
   endif(ADA_TESTING AND NOT EMSCRIPTEN)
 
   If(ADA_BENCHMARKS AND NOT EMSCRIPTEN)
-    if(Git_FOUND)
-      message(STATUS "Ada benchmarks enabled.")
-      add_subdirectory(benchmarks)
-    else()
-      message(STATUS "The benchmarks are disabled because git was not found.")
-    endif()
+    message(STATUS "Ada benchmarks enabled.")
+    add_subdirectory(benchmarks)
   else(ADA_BENCHMARKS AND NOT EMSCRIPTEN)
     if(is_top_project)
       message(STATUS "Ada benchmarks disabled. Set ADA_BENCHMARKS=ON to enable them.")
@@ -88,8 +79,26 @@ if(ADA_TESTING OR ADA_BENCHMARKS OR ADA_TOOLS)
   endif(ADA_TESTING AND EMSCRIPTEN)
 endif()
 
+if(ADA_USE_SIMDUTF)
+  CPMAddPackage(
+    NAME simdutf
+    GITHUB_REPOSITORY simdutf/simdutf
+    VERSION 7.3.2
+    OPTIONS "SIMDUTF_TESTS OFF" "SIMDUTF_TOOLS OFF"
+  )
+endif()
 
 add_library(ada::ada ALIAS ada)
+
+if(ADA_TESTING)
+  # IMPORTANT!
+  #
+  # We enable std_regex_provider for testing purposes
+  # It is not recommended to enable this flag and use std::regex under
+  # production environments due to several security issues.
+  #
+  target_compile_definitions(ada PUBLIC ADA_USE_UNSAFE_STD_REGEX_PROVIDER=ON)
+endif()
 
 set_target_properties(
   ada PROPERTIES
@@ -106,11 +115,7 @@ include(GNUInstallDirs)
 # endif()
 
 if(ADA_TOOLS)
-  if(Git_FOUND)
-    add_subdirectory(tools)
-  else()
-    message(STATUS "The tools are disabled because git was not found.")
-  endif()
+  add_subdirectory(tools)
 endif()
 
 install(
@@ -168,6 +173,18 @@ install(
   NAMESPACE ada::
   DESTINATION "${ADA_INSTALL_CMAKEDIR}"
   COMPONENT example_development
+)
+
+
+# pkg-config
+include(cmake/JoinPaths.cmake)
+join_paths(PKGCONFIG_INCLUDEDIR "\${prefix}" "${CMAKE_INSTALL_INCLUDEDIR}")
+join_paths(PKGCONFIG_LIBDIR "\${prefix}" "${CMAKE_INSTALL_LIBDIR}")
+
+configure_file("ada.pc.in" "ada.pc" @ONLY)
+install(
+  FILES "${CMAKE_CURRENT_BINARY_DIR}/ada.pc"
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig"
 )
 
 if(is_top_project)

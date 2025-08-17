@@ -1,7 +1,8 @@
-#include "ada.h"
-#include "ada/character_sets-inl.h"
 #include "ada/common_defs.h"
+#include "ada/character_sets-inl.h"
+#include "ada/character_sets.h"
 #include "ada/unicode.h"
+#include "ada/log.h"
 
 ADA_PUSH_DISABLE_ALL_WARNINGS
 #include "ada_idna.cpp"
@@ -12,7 +13,11 @@ ADA_POP_DISABLE_WARNINGS
 #include <arm_neon.h>
 #elif ADA_SSE2
 #include <emmintrin.h>
+#elif ADA_LSX
+#include <lsxintrin.h>
 #endif
+
+#include <ranges>
 
 namespace ada::unicode {
 
@@ -54,8 +59,7 @@ ada_really_inline bool has_tabs_or_newline(
     std::string_view user_input) noexcept {
   // first check for short strings in which case we do it naively.
   if (user_input.size() < 16) {  // slow path
-    return std::any_of(user_input.begin(), user_input.end(),
-                       is_tabs_or_newline);
+    return std::ranges::any_of(user_input, is_tabs_or_newline);
   }
   // fast path for long strings (expected to be common)
   size_t i = 0;
@@ -93,8 +97,7 @@ ada_really_inline bool has_tabs_or_newline(
     std::string_view user_input) noexcept {
   // first check for short strings in which case we do it naively.
   if (user_input.size() < 16) {  // slow path
-    return std::any_of(user_input.begin(), user_input.end(),
-                       is_tabs_or_newline);
+    return std::ranges::any_of(user_input, is_tabs_or_newline);
   }
   // fast path for long strings (expected to be common)
   size_t i = 0;
@@ -119,6 +122,38 @@ ada_really_inline bool has_tabs_or_newline(
         _mm_cmpeq_epi8(word, mask3));
   }
   return _mm_movemask_epi8(running) != 0;
+}
+#elif ADA_LSX
+ada_really_inline bool has_tabs_or_newline(
+    std::string_view user_input) noexcept {
+  // first check for short strings in which case we do it naively.
+  if (user_input.size() < 16) {  // slow path
+    return std::ranges::any_of(user_input, is_tabs_or_newline);
+  }
+  // fast path for long strings (expected to be common)
+  size_t i = 0;
+  const __m128i mask1 = __lsx_vrepli_b('\r');
+  const __m128i mask2 = __lsx_vrepli_b('\n');
+  const __m128i mask3 = __lsx_vrepli_b('\t');
+  // If we supported SSSE3, we could use the algorithm that we use for NEON.
+  __m128i running{0};
+  for (; i + 15 < user_input.size(); i += 16) {
+    __m128i word = __lsx_vld((const __m128i*)(user_input.data() + i), 0);
+    running = __lsx_vor_v(
+        __lsx_vor_v(running, __lsx_vor_v(__lsx_vseq_b(word, mask1),
+                                         __lsx_vseq_b(word, mask2))),
+        __lsx_vseq_b(word, mask3));
+  }
+  if (i < user_input.size()) {
+    __m128i word = __lsx_vld(
+        (const __m128i*)(user_input.data() + user_input.length() - 16), 0);
+    running = __lsx_vor_v(
+        __lsx_vor_v(running, __lsx_vor_v(__lsx_vseq_b(word, mask1),
+                                         __lsx_vseq_b(word, mask2))),
+        __lsx_vseq_b(word, mask3));
+  }
+  if (__lsx_bz_v(running)) return false;
+  return true;
 }
 #else
 ada_really_inline bool has_tabs_or_newline(
@@ -272,6 +307,17 @@ ada_really_inline constexpr bool is_ascii_hex_digit(const char c) noexcept {
          (c >= 'a' && c <= 'f');
 }
 
+ada_really_inline constexpr bool is_ascii_digit(const char c) noexcept {
+  // An ASCII digit is a code point in the range U+0030 (0) to U+0039 (9),
+  // inclusive.
+  return (c >= '0' && c <= '9');
+}
+
+ada_really_inline constexpr bool is_ascii(const char32_t c) noexcept {
+  // If code point is between U+0000 and U+007F inclusive, then return true.
+  return c <= 0x7F;
+}
+
 ada_really_inline constexpr bool is_c0_control_or_space(const char c) noexcept {
   return (unsigned char)c <= ' ';
 }
@@ -414,10 +460,9 @@ bool percent_encode(const std::string_view input, const uint8_t character_set[],
                     std::string& out) {
   ada_log("percent_encode ", input, " to output string while ",
           append ? "appending" : "overwriting");
-  auto pointer =
-      std::find_if(input.begin(), input.end(), [character_set](const char c) {
-        return character_sets::bit_at(character_set, c);
-      });
+  auto pointer = std::ranges::find_if(input, [character_set](const char c) {
+    return character_sets::bit_at(character_set, c);
+  });
   ada_log("percent_encode done checking, moved to ",
           std::distance(input.begin(), pointer));
 
@@ -431,6 +476,7 @@ bool percent_encode(const std::string_view input, const uint8_t character_set[],
   }
   ada_log("percent_encode appending ", std::distance(input.begin(), pointer),
           " bytes");
+  // NOLINTNEXTLINE(bugprone-suspicious-stringview-data-usage)
   out.append(input.data(), std::distance(input.begin(), pointer));
   ada_log("percent_encode processing ", std::distance(pointer, input.end()),
           " bytes");
@@ -465,6 +511,7 @@ bool to_ascii(std::optional<std::string>& out, const std::string_view plain,
 std::string percent_encode(const std::string_view input,
                            const uint8_t character_set[], size_t index) {
   std::string out;
+  // NOLINTNEXTLINE(bugprone-suspicious-stringview-data-usage)
   out.append(input.data(), index);
   auto pointer = input.begin() + index;
   for (; pointer != input.end(); pointer++) {

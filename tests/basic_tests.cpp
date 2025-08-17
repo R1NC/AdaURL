@@ -94,6 +94,12 @@ TYPED_TEST(basic_tests, readme) {
   SUCCEED();
 }
 
+TYPED_TEST(basic_tests, readmefree) {
+  auto url = ada::parse("https://www.google.com");
+  ASSERT_TRUE(bool(url));
+  SUCCEED();
+}
+
 TYPED_TEST(basic_tests, readme2) {
   auto url = ada::parse<TypeParam>("https://www.google.com");
   url->set_username("username");
@@ -102,8 +108,24 @@ TYPED_TEST(basic_tests, readme2) {
   SUCCEED();
 }
 
+TYPED_TEST(basic_tests, readme2free) {
+  auto url = ada::parse("https://www.google.com");
+  url->set_username("username");
+  url->set_password("password");
+  ASSERT_EQ(url->get_href(), "https://username:password@www.google.com/");
+  SUCCEED();
+}
+
 TYPED_TEST(basic_tests, readme3) {
   auto url = ada::parse<TypeParam>("https://www.google.com");
+  ASSERT_EQ(url->set_protocol("wss"), true);
+  ASSERT_EQ(url->get_protocol(), "wss:");
+  ASSERT_EQ(url->get_href(), "wss://www.google.com/");
+  SUCCEED();
+}
+
+TYPED_TEST(basic_tests, readme3free) {
+  auto url = ada::parse("https://www.google.com");
   ASSERT_EQ(url->set_protocol("wss"), true);
   ASSERT_EQ(url->get_protocol(), "wss:");
   ASSERT_EQ(url->get_href(), "wss://www.google.com/");
@@ -174,8 +196,8 @@ TYPED_TEST(basic_tests, nodejs2) {
   ASSERT_EQ(url->get_search(), "?test");
   url->set_search("");
   ASSERT_EQ(url->get_search(), "");
-  ASSERT_EQ(url->get_pathname(), "space");
-  ASSERT_EQ(url->get_href(), "data:space");
+  ASSERT_EQ(url->get_pathname(), "space   %20");
+  ASSERT_EQ(url->get_href(), "data:space   %20");
   SUCCEED();
 }
 
@@ -184,8 +206,8 @@ TYPED_TEST(basic_tests, nodejs3) {
   ASSERT_EQ(url->get_search(), "?test");
   url->set_search("");
   ASSERT_EQ(url->get_search(), "");
-  ASSERT_EQ(url->get_pathname(), "space    ");
-  ASSERT_EQ(url->get_href(), "data:space    #test");
+  ASSERT_EQ(url->get_pathname(), "space   %20");
+  ASSERT_EQ(url->get_href(), "data:space   %20#test");
   SUCCEED();
 }
 
@@ -353,8 +375,8 @@ TYPED_TEST(basic_tests, node_issue_47889) {
   auto url = ada::parse<TypeParam>("..#", &*urlbase);
   ASSERT_TRUE(url);
   ASSERT_TRUE(url->has_opaque_path);
-  ASSERT_EQ(url->get_href(), "a:b#");
-  ASSERT_EQ(url->get_pathname(), "b");
+  ASSERT_EQ(url->get_href(), "a:b/#");
+  ASSERT_EQ(url->get_pathname(), "b/");
   SUCCEED();
 }
 
@@ -461,5 +483,43 @@ TYPED_TEST(basic_tests, path_setter_bug) {
 TYPED_TEST(basic_tests, negativeport) {
   auto url = ada::parse<TypeParam>("https://www.google.com");
   ASSERT_FALSE(url->set_port("-1"));
+  SUCCEED();
+}
+
+// https://github.com/ada-url/ada/issues/826
+TYPED_TEST(basic_tests, set_invalid_port) {
+  auto url = ada::parse<TypeParam>("fake://dummy.test");
+  ASSERT_TRUE(url);
+  ASSERT_FALSE(url->set_port("invalid80"));
+  ASSERT_EQ(url->get_port(), "");
+  ASSERT_TRUE(url->set_port("80valid"));
+  ASSERT_TRUE(url->is_valid);
+  ASSERT_EQ(url->get_port(), "80");
+  ASSERT_TRUE(url->is_valid);
+  SUCCEED();
+}
+
+TYPED_TEST(basic_tests, test_possible_asan) {
+  auto url = ada::parse<TypeParam>("file:///");
+  ASSERT_TRUE(url);
+  ASSERT_EQ(url->get_protocol(), "file:");
+  SUCCEED();
+}
+
+TYPED_TEST(basic_tests, test_issue_935) {
+  auto url = ada::parse<TypeParam>("file:///foo/.bar/../baz.js");
+  ASSERT_TRUE(url);
+  ASSERT_EQ(url->get_pathname(), "/foo/baz.js");
+
+  // this should go into the fast path also
+  auto no_dot = ada::parse<TypeParam>("file:///foo/bar/baz.js");
+  ASSERT_EQ(no_dot->get_pathname(), "/foo/bar/baz.js");
+  SUCCEED();
+}
+
+TYPED_TEST(basic_tests, test_issue_970) {
+  auto url = ada::parse<TypeParam>("http://foo/bar^baz");
+  ASSERT_TRUE(url);
+  ASSERT_EQ(url->get_pathname(), "/bar%5Ebaz");
   SUCCEED();
 }

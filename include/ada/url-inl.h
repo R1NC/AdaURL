@@ -5,10 +5,10 @@
 #ifndef ADA_URL_INL_H
 #define ADA_URL_INL_H
 
-#include "ada/checkers.h"
 #include "ada/url.h"
 #include "ada/url_components.h"
 
+#include <charconv>
 #include <optional>
 #include <string>
 #if ADA_REGULAR_VISUAL_STUDIO
@@ -55,6 +55,7 @@ inline std::ostream &operator<<(std::ostream &out, const ada::url &u) {
   out.protocol_end = uint32_t(get_protocol().size());
 
   // Trailing index is always the next character of the current one.
+  // NOLINTNEXTLINE(clang-analyzer-deadcode.DeadStores)
   size_t running_index = out.protocol_end;
 
   if (host.has_value()) {

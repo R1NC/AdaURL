@@ -5,6 +5,10 @@
 #ifndef ADA_COMMON_DEFS_H
 #define ADA_COMMON_DEFS_H
 
+// https://en.cppreference.com/w/cpp/feature_test#Library_features
+// detect C++20 features
+#include <version>
+
 #ifdef _MSC_VER
 #define ADA_VISUAL_STUDIO 1
 /**
@@ -95,7 +99,8 @@
   ADA_DISABLE_GCC_WARNING("-Wreturn-type")          \
   ADA_DISABLE_GCC_WARNING("-Wshadow")               \
   ADA_DISABLE_GCC_WARNING("-Wunused-parameter")     \
-  ADA_DISABLE_GCC_WARNING("-Wunused-variable")
+  ADA_DISABLE_GCC_WARNING("-Wunused-variable")      \
+  ADA_DISABLE_GCC_WARNING("-Wsign-compare")
 #define ADA_PRAGMA(P) _Pragma(#P)
 #define ADA_DISABLE_GCC_WARNING(WARNING) \
   ADA_PRAGMA(GCC diagnostic ignored WARNING)
@@ -238,6 +243,10 @@ namespace ada {
 #define ADA_NEON 1
 #endif
 
+#if defined(__loongarch_sx)
+#define ADA_LSX 1
+#endif
+
 #ifndef __has_cpp_attribute
 #define ada_lifetime_bound
 #elif __has_cpp_attribute(msvc::lifetimebound)
@@ -249,5 +258,16 @@ namespace ada {
 #else
 #define ada_lifetime_bound
 #endif
+
+#ifdef __cpp_lib_format
+#if __cpp_lib_format >= 202110L
+#include <format>
+#define ADA_HAS_FORMAT 1
+#endif
+#endif
+
+#ifndef ADA_INCLUDE_URL_PATTERN
+#define ADA_INCLUDE_URL_PATTERN 1
+#endif  // ADA_INCLUDE_URL_PATTERN
 
 #endif  // ADA_COMMON_DEFS_H

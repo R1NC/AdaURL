@@ -1,6 +1,7 @@
+#include "ada/implementation-inl.h"
+
 #include <string_view>
 
-#include "ada.h"
 #include "ada/common_defs.h"
 #include "ada/parser.h"
 #include "ada/url.h"
@@ -9,12 +10,12 @@
 namespace ada {
 
 template <class result_type>
-ada_warn_unused tl::expected<result_type, ada::errors> parse(
+ada_warn_unused tl::expected<result_type, errors> parse(
     std::string_view input, const result_type* base_url) {
   result_type u =
       ada::parser::parse_url_impl<result_type, true>(input, base_url);
   if (!u.is_valid) {
-    return tl::unexpected(errors::generic_error);
+    return tl::unexpected(errors::type_error);
   }
   return u;
 }
@@ -66,7 +67,7 @@ bool can_parse(std::string_view input, const std::string_view* base_input) {
   return result.is_valid;
 }
 
-ada_warn_unused std::string to_string(ada::encoding_type type) {
+ada_warn_unused std::string_view to_string(ada::encoding_type type) {
   switch (type) {
     case ada::encoding_type::UTF8:
       return "UTF-8";

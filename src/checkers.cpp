@@ -1,6 +1,11 @@
+#include "ada/checkers-inl.h"
 #include "ada/checkers.h"
+#include "ada/unicode-inl.h"
+#include "ada/common_defs.h"
 
 #include <algorithm>
+#include <array>
+#include <string_view>
 
 namespace ada::checkers {
 
@@ -51,8 +56,8 @@ ada_really_inline constexpr bool is_ipv4(std::string_view view) noexcept {
   }
   // We have 0x followed by some characters, we need to check that they are
   // hexadecimals.
-  return std::all_of(view.begin() + 2, view.end(),
-                     ada::unicode::is_lowercase_hex);
+  view.remove_prefix(2);
+  return std::ranges::all_of(view, ada::unicode::is_lowercase_hex);
 }
 
 // for use with path_signature, we include all characters that need percent
@@ -62,7 +67,8 @@ static constexpr std::array<uint8_t, 256> path_signature_table =
       std::array<uint8_t, 256> result{};
       for (size_t i = 0; i < 256; i++) {
         if (i <= 0x20 || i == 0x22 || i == 0x23 || i == 0x3c || i == 0x3e ||
-            i == 0x3f || i == 0x60 || i == 0x7b || i == 0x7d || i > 0x7e) {
+            i == 0x3f || i == 0x5e || i == 0x60 || i == 0x7b || i == 0x7d ||
+            i > 0x7e) {
           result[i] = 1;
         } else if (i == 0x25) {
           result[i] = 8;

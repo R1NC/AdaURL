@@ -9,6 +9,7 @@
 #include "ada/ada_idna.h"
 
 #include <string>
+#include <string_view>
 #include <optional>
 
 /**
@@ -123,6 +124,20 @@ ada_really_inline constexpr bool is_alnum_plus(char c) noexcept;
  * ASCII digit or a code point in the range U+0061 (a) to U+0066 (f), inclusive.
  */
 ada_really_inline constexpr bool is_ascii_hex_digit(char c) noexcept;
+
+/**
+ * @private
+ * An ASCII digit is a code point in the range U+0030 (0) to U+0039 (9),
+ * inclusive.
+ */
+ada_really_inline constexpr bool is_ascii_digit(char c) noexcept;
+
+/**
+ * @private
+ * @details If a char is between U+0000 and U+007F inclusive, then it's an ASCII
+ * character.
+ */
+ada_really_inline constexpr bool is_ascii(char32_t c) noexcept;
 
 /**
  * @private

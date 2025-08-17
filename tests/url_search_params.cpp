@@ -1,6 +1,11 @@
 #include "ada.h"
 #include "gtest/gtest.h"
 
+#include <deque>
+#include <string>
+#include <utility>  // For std::pair
+#include <vector>
+
 TEST(url_search_params, append) {
   auto search_params = ada::url_search_params();
   search_params.append("key", "value");
@@ -23,13 +28,13 @@ TEST(url_search_params, to_string) {
 
 TEST(url_search_params, with_accents) {
   auto search_params = ada::url_search_params();
-  search_params.append("key1", "été");
-  search_params.append("key2", "Céline Dion++");
+  search_params.append("key1", "\u00E9t\u00E9");
+  search_params.append("key2", "C\u00E9line Dion++");
   ASSERT_EQ(search_params.size(), 2);
   ASSERT_EQ(search_params.to_string(),
             "key1=%C3%A9t%C3%A9&key2=C%C3%A9line+Dion%2B%2B");
-  ASSERT_EQ(search_params.get("key1"), "été");
-  ASSERT_EQ(search_params.get("key2"), "Céline Dion++");
+  ASSERT_EQ(search_params.get("key1"), "\u00E9t\u00E9");
+  ASSERT_EQ(search_params.get("key2"), "C\u00E9line Dion++");
   SUCCEED();
 }
 
@@ -123,6 +128,168 @@ TEST(url_search_params, sort) {
   SUCCEED();
 }
 
+// Taken from
+// https://github.com/web-platform-tests/wpt/blob/master/url/urlsearchparams-sort.any.js#L3-L4
+TEST(url_search_params, sort_repeated_keys) {
+  ada::url_search_params search_params("z=b&a=b&z=a&a=a");
+  ASSERT_EQ(search_params.size(), 4);
+  search_params.sort();
+
+  auto entries = search_params.get_entries();
+  auto next = entries.next();
+  ASSERT_EQ(next->first, "a");
+  ASSERT_EQ(next->second, "b");
+
+  next = entries.next();
+  ASSERT_EQ(next->first, "a");
+  ASSERT_EQ(next->second, "a");
+
+  next = entries.next();
+  ASSERT_EQ(next->first, "z");
+  ASSERT_EQ(next->second, "b");
+
+  next = entries.next();
+  ASSERT_EQ(next->first, "z");
+  ASSERT_EQ(next->second, "a");
+
+  SUCCEED();
+}
+
+// Taken from
+// https://github.com/web-platform-tests/wpt/blob/b7445afd17303e9443d1da92de9d2b93a9403b0b/url/urlsearchparams-sort.any.js#L7-L8
+TEST(url_search_params, sort_unicode_replacement_chars) {
+  ada::url_search_params search_params(
+      "\xef\xbf\xbd=x&\xef\xbf\xbc&\xef\xbf\xbd=a");
+  ASSERT_EQ(search_params.size(), 3);
+  search_params.sort();
+
+  auto entries = search_params.get_entries();
+  auto next = entries.next();
+  ASSERT_EQ(next->first, "\xef\xbf\xbc");
+  ASSERT_EQ(next->second, "");
+
+  next = entries.next();
+  ASSERT_EQ(next->first, "\xef\xbf\xbd");
+  ASSERT_EQ(next->second, "x");
+
+  next = entries.next();
+  ASSERT_EQ(next->first, "\xef\xbf\xbd");
+  ASSERT_EQ(next->second, "a");
+
+  SUCCEED();
+}
+
+// Taken from
+// https://github.com/web-platform-tests/wpt/blob/b7445afd17303e9443d1da92de9d2b93a9403b0b/url/urlsearchparams-sort.any.js#L15-L16
+TEST(url_search_params, sort_unicode_combining_chars) {
+  ada::url_search_params search_params("\xc3\xa9&e\xef\xbf\xbd&e\xcc\x81");
+  ASSERT_EQ(search_params.size(), 3);
+  search_params.sort();
+
+  auto keys = search_params.get_keys();
+  ASSERT_EQ(keys.next(), "e\xcc\x81");
+  ASSERT_EQ(keys.next(), "e\xef\xbf\xbd");
+  ASSERT_EQ(keys.next(), "\xc3\xa9");
+
+  SUCCEED();
+}
+
+// Taken from
+// https://github.com/web-platform-tests/wpt/blob/b7445afd17303e9443d1da92de9d2b93a9403b0b/url/urlsearchparams-sort.any.js#L19-L20
+TEST(url_search_params, sort_many_params) {
+  ada::url_search_params search_params(
+      "z=z&a=a&z=y&a=b&z=x&a=c&z=w&a=d&z=v&a=e&z=u&a=f&z=t&a=g");
+  ASSERT_EQ(search_params.size(), 14);
+  search_params.sort();
+
+  std::deque<std::pair<std::string, std::string>> expected = {
+      {"a", "a"}, {"a", "b"}, {"a", "c"}, {"a", "d"}, {"a", "e"},
+      {"a", "f"}, {"a", "g"}, {"z", "z"}, {"z", "y"}, {"z", "x"},
+      {"z", "w"}, {"z", "v"}, {"z", "u"}, {"z", "t"}};
+
+  for (auto& entry : search_params) {
+    auto check = expected.front();
+    expected.pop_front();
+    ASSERT_EQ(check.first, entry.first);
+    ASSERT_EQ(check.second, entry.second);
+  }
+  ASSERT_EQ(expected.size(), 0);
+
+  SUCCEED();
+}
+
+// Taken from
+// https://github.com/web-platform-tests/wpt/blob/b7445afd17303e9443d1da92de9d2b93a9403b0b/url/urlsearchparams-sort.any.js#L23-L24
+TEST(url_search_params, sort_empty_values) {
+  ada::url_search_params search_params("bbb&bb&aaa&aa=x&aa=y");
+  ASSERT_EQ(search_params.size(), 5);
+  search_params.sort();
+
+  auto entries = search_params.get_entries();
+  auto next = entries.next();
+  ASSERT_EQ(next->first, "aa");
+  ASSERT_EQ(next->second, "x");
+
+  next = entries.next();
+  ASSERT_EQ(next->first, "aa");
+  ASSERT_EQ(next->second, "y");
+
+  next = entries.next();
+  ASSERT_EQ(next->first, "aaa");
+  ASSERT_EQ(next->second, "");
+
+  next = entries.next();
+  ASSERT_EQ(next->first, "bb");
+  ASSERT_EQ(next->second, "");
+
+  next = entries.next();
+  ASSERT_EQ(next->first, "bbb");
+  ASSERT_EQ(next->second, "");
+
+  SUCCEED();
+}
+
+// Taken from
+// https://github.com/web-platform-tests/wpt/blob/b7445afd17303e9443d1da92de9d2b93a9403b0b/url/urlsearchparams-sort.any.js#L27-L28
+TEST(url_search_params, sort_empty_keys) {
+  ada::url_search_params search_params("z=z&=f&=t&=x");
+  ASSERT_EQ(search_params.size(), 4);
+  search_params.sort();
+
+  auto entries = search_params.get_entries();
+  auto next = entries.next();
+  ASSERT_EQ(next->first, "");
+  ASSERT_EQ(next->second, "f");
+
+  next = entries.next();
+  ASSERT_EQ(next->first, "");
+  ASSERT_EQ(next->second, "t");
+
+  next = entries.next();
+  ASSERT_EQ(next->first, "");
+  ASSERT_EQ(next->second, "x");
+
+  next = entries.next();
+  ASSERT_EQ(next->first, "z");
+  ASSERT_EQ(next->second, "z");
+
+  SUCCEED();
+}
+
+// Taken from
+// https://github.com/web-platform-tests/wpt/blob/b7445afd17303e9443d1da92de9d2b93a9403b0b/url/urlsearchparams-sort.any.js#L31-L32
+TEST(url_search_params, sort_unicode_emoji) {
+  ada::url_search_params search_params("a\xf0\x9f\x8c\x88&a\xf0\x9f\x92\xa9");
+  ASSERT_EQ(search_params.size(), 2);
+  search_params.sort();
+
+  auto keys = search_params.get_keys();
+  ASSERT_EQ(keys.next(), "a\xf0\x9f\x8c\x88");
+  ASSERT_EQ(keys.next(), "a\xf0\x9f\x92\xa9");
+
+  SUCCEED();
+}
+
 TEST(url_search_params, string_constructor) {
   auto p = ada::url_search_params("?a=b");
   ASSERT_EQ(p.to_string(), "a=b");
@@ -152,7 +319,7 @@ TEST(url_search_params, string_constructor_with_edge_cases) {
   ASSERT_TRUE(p.has(" "));
   ASSERT_TRUE(!p.has("c"));
   ASSERT_TRUE(p.has(" c"));
-  ASSERT_TRUE(p.has("møø"));
+  ASSERT_TRUE(p.has("m\u00f8\u00f8"));
   SUCCEED();
 }
 
@@ -245,8 +412,9 @@ TEST(url_search_params, test_character_set) {
   // - The userinfo percent-encode set is the path percent-encode set and U+002F
   // (/), U+003A (:), U+003B (;), U+003D (=), U+0040 (@), U+005B ([) to U+005E
   // (^), inclusive, and U+007C (|).
-  std::vector<char> unique_keys = {'/', ':', ';', '=', '@', '[',  ']', '^', '|',
-                                   '$', '&', '+', ',', '!', '\'', ')', '~'};
+  std::vector<char> unique_keys = {'/', ':', ';',  '=', '@', '[',
+                                   ']', '^', '|',  '$', '&', '+',
+                                   ',', '!', '\'', ')', '~', '\\'};
   for (auto& unique_key : unique_keys) {
     auto value = "value" + std::string(1, unique_key);
     search_params.set("key", value);
@@ -255,5 +423,28 @@ TEST(url_search_params, test_character_set) {
     // Stringified version should be percent encoded.
     ASSERT_NE(search_params.to_string(), "key=" + value);
   }
+  SUCCEED();
+}
+
+// Taken from
+// https://github.com/web-platform-tests/wpt/blob/d5085f61e2d949bc9fb24b04f4c6a47bdf6d3be9/url/urlsearchparams-sort.any.js#L11
+TEST(url_search_params, sort_unicode_code_units) {
+  ada::url_search_params search_params("\xef\xac\x83&\xf0\x9f\x8c\x88");
+  search_params.sort();
+  ASSERT_EQ(search_params.size(), 2);
+  auto keys = search_params.get_keys();
+  ASSERT_EQ(keys.next(), "\xf0\x9f\x8c\x88");
+  ASSERT_EQ(keys.next(), "\xef\xac\x83");
+  SUCCEED();
+}
+
+TEST(url_search_params, sort_unicode_code_units_edge_case) {
+  ada::url_search_params search_params(
+      "\xf0\x9f\x8c\x88\xef\xac\x83&\xf0\x9f\x8c\x88");
+  search_params.sort();
+  ASSERT_EQ(search_params.size(), 2);
+  auto keys = search_params.get_keys();
+  ASSERT_EQ(keys.next(), "\xf0\x9f\x8c\x88");
+  ASSERT_EQ(keys.next(), "\xf0\x9f\x8c\x88\xef\xac\x83");
   SUCCEED();
 }
